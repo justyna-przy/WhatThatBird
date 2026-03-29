@@ -6,7 +6,7 @@
  * A module-level singleton ensures only one interval runs per process.
  */
 
-import { queryStatus } from "./serial";
+import { queryStatus } from "./api";
 
 const INTERVAL_MS = 30_000; // ping every 30 s
 const TIMEOUT_MS  = 90_000; // offline after 90 s without a response

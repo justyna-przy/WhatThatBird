@@ -5,7 +5,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { queryStatus } from "@/lib/serial";
+import { queryStatus } from "@/lib/api";
 
 export async function GET() {
   try {

@@ -16,7 +16,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, retryAfterSeconds } from "@/lib/ratelimit";
 import { enqueue, getQueueDepth } from "@/lib/queue";
-import { loadPcmAndInfer } from "@/lib/serial";
+import { loadPcmAndInfer } from "@/lib/api";
 import { startHeartbeat } from "@/lib/heartbeat";
 
 // Start heartbeat on first request if not already running

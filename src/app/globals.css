@@ -48,11 +48,11 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
+  --background: #c9d9f9;
   --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
+  --card: #eef3fb;
   --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
+  --popover: #eef3fb;
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
@@ -125,5 +125,11 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display), Georgia, serif;
   }
 }

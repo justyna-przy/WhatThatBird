@@ -1,367 +1,138 @@
-"use client";
+import Image from "next/image";
+import Link from "next/link";
+import { ArrowUpRight } from "lucide-react";
+import { SiteNav } from "@/components/site-nav";
+import { GITHUB_LINKS, SITE_NAME } from "@/lib/site";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
-import { Mic, MicOff, AlertCircle, Bird, Clock, Layers } from "lucide-react";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface Prediction {
-  idx: number;
-  label: string;
-  common: string;
-  conf: number;
-}
-
-interface InferResult {
-  status: string;
-  top3?: Prediction[];
-  latency_us?: number;
-  error?: string;
-  queueDepth?: number;
-}
-
-interface HealthStatus {
-  online: boolean;
-  lastSeenMs: number | null;
-  lastError: string | null;
-  queueDepth: number;
-  busy: boolean;
-}
-
-interface HistoryEntry {
-  timestamp: Date;
-  predictions: Prediction[];
-  latencyMs: number;
-}
-
-// ─── Audio helpers ─────────────────────────────────────────────────────────────
-
-const SAMPLE_RATE  = 16_000;
-const CLIP_SAMPLES = 48_000; // 3 s at 16 kHz
-const RECORD_MS    = 3_000;
-
-/** Record RECORD_MS of mic audio and return raw int16-LE PCM at 16 kHz mono. */
-async function recordAndResample(): Promise<ArrayBuffer> {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-
-  return new Promise((resolve, reject) => {
-    const chunks: BlobPart[] = [];
-    const recorder = new MediaRecorder(stream);
-
-    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-
-    recorder.onstop = async () => {
-      stream.getTracks().forEach((t) => t.stop());
-      try {
-        const blob     = new Blob(chunks, { type: recorder.mimeType });
-        const arrayBuf = await blob.arrayBuffer();
-        const audioCtx = new AudioContext();
-        const decoded  = await audioCtx.decodeAudioData(arrayBuf);
-        await audioCtx.close();
-
-        // Resample to 16 kHz mono using OfflineAudioContext
-        const offline = new OfflineAudioContext(1, CLIP_SAMPLES, SAMPLE_RATE);
-        const source  = offline.createBufferSource();
-        source.buffer = decoded;
-        source.connect(offline.destination);
-        source.start();
-        const resampled = await offline.startRendering();
-
-        // Float32 → int16-LE
-        const floats = resampled.getChannelData(0);
-        const pcm    = new Int16Array(CLIP_SAMPLES);
-        for (let i = 0; i < CLIP_SAMPLES; i++) {
-          const clamped = Math.max(-1, Math.min(1, floats[i] ?? 0));
-          pcm[i] = Math.round(clamped * 32767);
-        }
-        resolve(pcm.buffer);
-      } catch (err) {
-        reject(err);
-      }
-    };
-
-    recorder.onerror = (e) => reject(e);
-    recorder.start();
-    setTimeout(() => recorder.stop(), RECORD_MS);
-  });
-}
-
-/** Draw a waveform onto a canvas from a raw int16 PCM ArrayBuffer. */
-function drawWaveform(canvas: HTMLCanvasElement, pcmBuffer: ArrayBuffer) {
-  const ctx     = canvas.getContext("2d")!;
-  const samples = new Int16Array(pcmBuffer);
-  const { width, height } = canvas;
-
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "#0a0a0a";
-  ctx.fillRect(0, 0, width, height);
-
-  ctx.strokeStyle = "#22c55e";
-  ctx.lineWidth   = 1;
-  ctx.beginPath();
-
-  const step = Math.floor(samples.length / width);
-  for (let x = 0; x < width; x++) {
-    const sample = samples[x * step] ?? 0;
-    const y = (height / 2) * (1 - sample / 32768);
-    x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-}
-
-// ─── Component ────────────────────────────────────────────────────────────────
-
-type UIState = "idle" | "recording" | "sending" | "done" | "error";
+const highlights = [
+  { label: "Classes", value: "50" },
+  { label: "Inference", value: "40-80 ms" },
+  { label: "Target", value: "MAX78002" },
+  { label: "Memory", value: "1 MB SRAM" },
+];  
 
 export default function Home() {
-  const [uiState,   setUiState]   = useState<UIState>("idle");
-  const [result,    setResult]    = useState<InferResult | null>(null);
-  const [errorMsg,  setErrorMsg]  = useState<string | null>(null);
-  const [health,    setHealth]    = useState<HealthStatus | null>(null);
-  const [history,   setHistory]   = useState<HistoryEntry[]>([]);
-  const [countdown, setCountdown] = useState(0);
-
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const timerRef  = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Health polling every 10 s
-  useEffect(() => {
-    async function poll() {
-      try {
-        const res = await fetch("/api/health");
-        if (res.ok) setHealth(await res.json());
-      } catch { /* keep last known */ }
-    }
-    poll();
-    const id = setInterval(poll, 10_000);
-    return () => clearInterval(id);
-  }, []);
-
-  // Recording countdown ticker
-  useEffect(() => {
-    if (uiState === "recording") {
-      let remaining = RECORD_MS / 1000;
-      setCountdown(remaining);
-      timerRef.current = setInterval(() => {
-        remaining = Math.max(0, remaining - 0.1);
-        setCountdown(remaining);
-      }, 100);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
-      setCountdown(0);
-    }
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [uiState]);
-
-  // Main record → resample → infer flow
-  const handleRecord = useCallback(async () => {
-    if (uiState === "recording" || uiState === "sending") return;
-    setUiState("recording");
-    setResult(null);
-    setErrorMsg(null);
-
-    let pcmBuffer: ArrayBuffer;
-    try {
-      pcmBuffer = await recordAndResample();
-    } catch (err) {
-      setErrorMsg(`Microphone error: ${err instanceof Error ? err.message : String(err)}`);
-      setUiState("error");
-      return;
-    }
-
-    if (canvasRef.current) drawWaveform(canvasRef.current, pcmBuffer);
-    setUiState("sending");
-
-    try {
-      const res  = await fetch("/api/infer", {
-        method: "POST",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: pcmBuffer,
-      });
-      const data: InferResult = await res.json();
-
-      if (!res.ok || data.status !== "ok") {
-        throw new Error(data.error ?? `HTTP ${res.status}`);
-      }
-
-      setResult(data);
-      setUiState("done");
-
-      if (data.top3 && data.latency_us != null) {
-        setHistory((prev) =>
-          [{ timestamp: new Date(), predictions: data.top3!, latencyMs: Math.round(data.latency_us! / 1000) },
-           ...prev].slice(0, 5)
-        );
-      }
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-      setUiState("error");
-    }
-  }, [uiState]);
-
-  // ─── Render ───────────────────────────────────────────────────────────────
-
-  const isOnline   = health?.online ?? false;
-  const queueDepth = health?.queueDepth ?? 0;
-  const buttonBusy = uiState === "recording" || uiState === "sending";
-
-  const buttonLabel: Record<UIState, string> = {
-    idle:      "Record 3 s",
-    recording: `Recording… ${countdown.toFixed(1)} s`,
-    sending:   "Analysing…",
-    done:      "Record again",
-    error:     "Try again",
-  };
-
   return (
-    <main className="min-h-screen bg-background text-foreground flex flex-col items-center px-4 py-10 gap-8">
-
-      {/* Header */}
-      <div className="flex flex-col items-center gap-2 text-center">
-        <div className="flex items-center gap-2">
-          <Bird className="w-8 h-8 text-green-500" />
-          <h1 className="text-3xl font-bold tracking-tight">WhatThatBird</h1>
+    <main className="bg-background text-slate-900">
+      <section
+        className="relative min-h-[100svh] overflow-hidden"
+        style={{
+          background:
+            "linear-gradient(180deg, #5576b5 0%, #24447f 16%, #132753 30%, #0a1b39 44%, #0a1b39 100%)",
+        }}
+      >
+        <div className="relative z-30">
+          <SiteNav light />
         </div>
-        <p className="text-muted-foreground text-sm max-w-md">
-          On-device Irish bird call classifier running on a MAX78002 neural-network
-          accelerator. Record 3 seconds of audio and let the chip identify the species.
-        </p>
-      </div>
 
-      {/* Device status bar */}
-      <div className="flex items-center gap-3 text-sm">
-        <span className="flex items-center gap-1.5">
-          <span className={`inline-block w-2.5 h-2.5 rounded-full ${
-            isOnline ? "bg-green-500 animate-pulse" : "bg-red-500"
-          }`} />
-          {isOnline ? "Device online" : "Device offline"}
-        </span>
-        <Separator orientation="vertical" className="h-4" />
-        <span className="flex items-center gap-1">
-          <Layers className="w-3.5 h-3.5 text-muted-foreground" />
-          Queue: {queueDepth}
-        </span>
-        {health?.busy && (
-          <>
-            <Separator orientation="vertical" className="h-4" />
-            <Badge variant="secondary" className="text-xs">Busy</Badge>
-          </>
-        )}
-      </div>
+        <div className="relative z-10 flex min-h-[calc(100svh-5.75rem)] items-center justify-center px-6 pb-36 pt-10 text-center">
+          <div className="max-w-4xl text-slate-100">
+            <p className="font-display text-3xl font-semibold tracking-wide md:text-5xl">
+              Low power and embedded
+            </p>
+            <h1 className="font-display mt-2 text-5xl leading-tight font-semibold md:text-8xl">
+              Bird-call Classification
+            </h1>
+            <p className="mt-4 text-base text-slate-200 md:text-xl">
+              University of Limerick final year project
+            </p>
 
-      {/* Record button + progress */}
-      <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-        <Button
-          size="lg"
-          className="w-full text-base gap-2"
-          onClick={handleRecord}
-          disabled={buttonBusy || !isOnline}
-        >
-          {uiState === "recording" ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-          {buttonLabel[uiState]}
-        </Button>
+            <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
+              <Link
+                href="/trial"
+                className="rounded-full bg-white px-6 py-3 text-sm font-semibold text-[#082969] transition-colors hover:bg-slate-200"
+              >
+                Try the model
+              </Link>
+              <Link
+                href="/report"
+                className="rounded-full border border-white/70 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-white/10"
+              >
+                Read the report
+              </Link>
+              <a
+                href={GITHUB_LINKS.webApp}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-full border border-white/50 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-white/10"
+              >
+                GitHub
+              </a>
+            </div>
+          </div>
+        </div>
 
-        {uiState === "recording" && (
-          <Progress
-            value={((RECORD_MS / 1000 - countdown) / (RECORD_MS / 1000)) * 100}
-            className="w-full h-2"
-          />
-        )}
+        <Image
+          src="/birdies.png"
+          alt="Bird species collage used in the project hero"
+          fill
+          priority
+          className="pointer-events-none absolute inset-0 z-20 object-cover object-bottom"
+        />
+      </section>
 
-        {!isOnline && (
-          <p className="text-xs text-muted-foreground text-center">
-            The MAX78002 must be connected and the Next.js server running locally.
-          </p>
-        )}
-      </div>
+      <section id="about" className="px-6 py-20 md:px-8">
+        <div className="mx-auto grid w-full max-w-6xl gap-10 md:grid-cols-[1.6fr_1fr] md:gap-14">
+          <div>
+            <h2 className="font-display text-4xl leading-tight text-[#0b235c] md:text-5xl">
+              What this project is about
+            </h2>
+            <p className="mt-6 max-w-3xl text-base leading-relaxed text-slate-700 md:text-lg">
+              {SITE_NAME} listens to short bird recordings and identifies the most likely species on a low-power
+              embedded chip. The goal is to make biodiversity monitoring cheaper, more scalable, and practical in
+              places where cloud processing is not reliable.
+            </p>
+            <p className="mt-3 max-w-3xl text-base leading-relaxed text-slate-700 md:text-lg">
+              Instead of sending audio to a server, inference runs on-device using the MAX78002 neural-network
+              accelerator. That keeps latency low and power use small while still giving a useful top-3 prediction.
+            </p>
 
-      {/* Waveform */}
-      <canvas
-        ref={canvasRef}
-        width={640}
-        height={80}
-        className="w-full max-w-2xl rounded-lg border border-border bg-[#0a0a0a]"
-      />
-
-      {/* Error */}
-      {uiState === "error" && errorMsg && (
-        <Alert variant="destructive" className="max-w-lg w-full">
-          <AlertCircle className="w-4 h-4" />
-          <AlertDescription>{errorMsg}</AlertDescription>
-        </Alert>
-      )}
-
-      {/* Prediction results */}
-      {result?.top3 && (
-        <Card className="w-full max-w-lg">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center justify-between text-base">
-              <span>Top predictions</span>
-              {result.latency_us != null && (
-                <span className="flex items-center gap-1 text-sm font-normal text-muted-foreground">
-                  <Clock className="w-3.5 h-3.5" />
-                  {Math.round(result.latency_us / 1000)} ms
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            {result.top3.map((p, i) => (
-              <div key={p.idx} className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground text-sm w-4">{i + 1}.</span>
-                    <div>
-                      <p className="font-medium leading-tight">{p.common}</p>
-                      <p className="text-xs text-muted-foreground italic">{p.label.replace(/_/g, " ")}</p>
-                    </div>
-                  </div>
-                  <Badge variant={i === 0 ? "default" : "secondary"} className="ml-2 shrink-0">
-                    {p.conf.toFixed(1)}%
-                  </Badge>
+            <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-4">
+              {highlights.map((item) => (
+                <div key={item.label} className="rounded-2xl bg-card p-4 shadow-sm ring-1 ring-slate-200">
+                  <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">{item.label}</p>
+                  <p className="mt-1 text-lg font-semibold text-[#0f2c70]">{item.value}</p>
                 </div>
-                <Progress value={p.conf} className="h-1.5" />
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+              ))}
+            </div>
+          </div>
 
-      {/* Prediction history */}
-      {history.length > 0 && (
-        <Card className="w-full max-w-lg">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Recent predictions</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            {history.map((entry, i) => (
-              <div key={i} className="flex items-center justify-between text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground text-xs w-16">
-                    {entry.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                  </span>
-                  <span className="font-medium">{entry.predictions[0].common}</span>
-                  <span className="text-muted-foreground italic text-xs hidden sm:inline">
-                    {entry.predictions[0].label.replace(/_/g, " ")}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Badge variant="outline" className="text-xs">{entry.predictions[0].conf.toFixed(1)}%</Badge>
-                  <span className="text-muted-foreground text-xs flex items-center gap-0.5">
-                    <Clock className="w-3 h-3" />{entry.latencyMs} ms
-                  </span>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+          <div className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-slate-200">
+            <h3 className="font-display text-3xl text-[#0b235c]">Explore the site</h3>
+            <div className="mt-5 space-y-3">
+              <Link href="/trial" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
+                <span className="font-medium">Live trial</span>
+                <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
+              </Link>
+              <Link href="/demo" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
+                <span className="font-medium">Demo video</span>
+                <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
+              </Link>
+              <Link href="/project" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
+                <span className="font-medium">Project story</span>
+                <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
+              </Link>
+              <Link href="/about" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
+                <span className="font-medium">Method and architecture</span>
+                <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
+              </Link>
+              <Link href="/report" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
+                <span className="font-medium">Paper and abstract</span>
+                <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
+              </Link>
+              <a
+                href={GITHUB_LINKS.webApp}
+                target="_blank"
+                rel="noreferrer"
+                className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100"
+              >
+                <span className="font-medium">GitHub repository</span>
+                <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
   );
 }
