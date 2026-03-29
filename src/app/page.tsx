@@ -72,6 +72,67 @@ export default function Home() {
                 </div>
               ))}
             </div>
+
+            <div className="mt-12">
+              <h3 className="text-3xl text-[#0b235c] md:text-4xl">MicroBird in plain English</h3>
+              <p className="mt-4 max-w-3xl text-base leading-relaxed text-slate-700 md:text-lg">
+                Bird monitoring is important, but listening manually to hours of recordings is slow and expensive.
+                This project makes identification practical at the edge: record a short clip, run a compact model on
+                MAX78002, and get likely species names with microjoule-range inference.
+              </p>
+
+              <div className="mt-7 grid gap-4 md:grid-cols-3">
+                <article className="rounded-2xl bg-card p-5 ring-1 ring-slate-200">
+                  <h4 className="text-xl text-[#0b235c]">The problem</h4>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-700">
+                    Biodiversity teams need more frequent monitoring, but current workflows often rely on manual
+                    labeling and cloud-heavy pipelines.
+                  </p>
+                </article>
+                <article className="rounded-2xl bg-card p-5 ring-1 ring-slate-200">
+                  <h4 className="text-xl text-[#0b235c]">The approach</h4>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-700">
+                    Convert audio into spectrogram features and run a quantized CNN directly on a low-power
+                    accelerator: 3.5 ms CNN latency and 15.3 µJ inference energy.
+                  </p>
+                </article>
+                <article className="rounded-2xl bg-card p-5 ring-1 ring-slate-200">
+                  <h4 className="text-xl text-[#0b235c]">The impact</h4>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-700">
+                    Faster feedback in surveys, lower operating cost, and broader acoustic monitoring without always
+                    depending on cloud infrastructure.
+                  </p>
+                </article>
+              </div>
+
+              <div className="mt-6 rounded-2xl bg-card p-6 ring-1 ring-slate-200">
+                <h4 className="text-2xl text-[#0b235c]">Try it now</h4>
+                <p className="mt-2 text-slate-700">
+                  Use the trial page to record 3 seconds of audio and run the on-device model, then compare with the
+                  demo and report pages for deeper details.
+                </p>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <Link
+                    href="/trial"
+                    className="rounded-full bg-[#0f2c70] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#143a93]"
+                  >
+                    Open trial
+                  </Link>
+                  <Link
+                    href="/demo"
+                    className="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-50"
+                  >
+                    Watch demo
+                  </Link>
+                  <Link
+                    href="/report"
+                    className="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-50"
+                  >
+                    Read report
+                  </Link>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-slate-200">
@@ -85,7 +146,7 @@ export default function Home() {
                 <span className="font-medium">Demo video</span>
                 <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
               </Link>
-              <Link href="/project" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
+              <Link href="/#about" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
                 <span className="font-medium">Project story</span>
                 <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
               </Link>

@@ -19,7 +19,7 @@ export default async function ReportPage() {
     <main className="min-h-screen bg-background text-slate-900">
       <SiteNav className="border-b border-slate-200 bg-card/90 backdrop-blur" />
 
-      <section className="mx-auto w-full max-w-[780px] px-5 py-5 md:px-8 md:py-6">
+      <section className="mx-auto w-full max-w-225 px-5 py-5 md:px-8 md:py-8">
         {reportReady ? (
           <div className="overflow-hidden rounded-2xl border border-[#afc4ea] bg-card">
             <ReportPdfViewerShell fileUrl="/report.pdf" downloadUrl="/report.pdf" title="MicroBird paper" />
