@@ -66,7 +66,7 @@ export default function Home() {
 
             <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-5">
               {highlights.map((item) => (
-                <div key={item.label} className="rounded-2xl bg-card p-4 shadow-sm ring-1 ring-slate-200">
+                <div key={item.label} className="rounded-lg border-2 border-[#f6f9fd] bg-card p-4 shadow-none">
                   <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">{item.label}</p>
                   <p className="mt-1 text-lg font-semibold text-[#0f2c70]">{item.value}</p>
                 </div>
@@ -81,7 +81,7 @@ export default function Home() {
                 <span className="font-medium">Live trial</span>
                 <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
               </Link>
-              <Link href="/demo" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
+              <Link href="/video" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
                 <span className="font-medium">Demo video</span>
                 <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
               </Link>

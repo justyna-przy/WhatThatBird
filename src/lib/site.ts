@@ -8,8 +8,8 @@ export const GITHUB_LINKS = {
 
 export const NAV_LINKS = [
   { href: "/demo", label: "Demo" },
-  { href: "/project", label: "Project" },
+  { href: "/video", label: "Video" },
   { href: "/report", label: "Paper" },
-  { href: "/trial", label: "Trial" },
   { href: "/about", label: "About" },
+
 ];

@@ -1,65 +1,991 @@
-import { access } from "node:fs/promises";
-import path from "node:path";
-import Link from "next/link";
-import { SiteNav } from "@/components/site-nav";
+"use client";
 
-async function hasDemoVideo() {
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, Bird, Clock, Layers, Mic, MicOff } from "lucide-react";
+import { SiteNav } from "@/components/site-nav";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { cn } from "@/lib/utils";
+
+const SAMPLE_RATE = 16_000;
+const MAX_AUDIO_SECONDS = 3;
+const MAX_RECORD_MS = MAX_AUDIO_SECONDS * 1000;
+const WINDOW_SECONDS = 3;
+const FFT_SIZE = 512;
+const SPECTROGRAM_BINS = 96;
+
+const hannWindow = new Float32Array(FFT_SIZE);
+for (let i = 0; i < FFT_SIZE; i++) {
+  hannWindow[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (FFT_SIZE - 1));
+}
+
+const trigTables = (() => {
+  const cosTable = Array.from({ length: SPECTROGRAM_BINS }, () => new Float32Array(FFT_SIZE));
+  const sinTable = Array.from({ length: SPECTROGRAM_BINS }, () => new Float32Array(FFT_SIZE));
+
+  for (let k = 0; k < SPECTROGRAM_BINS; k++) {
+    for (let n = 0; n < FFT_SIZE; n++) {
+      const phase = (2 * Math.PI * k * n) / FFT_SIZE;
+      cosTable[k][n] = Math.cos(phase);
+      sinTable[k][n] = Math.sin(phase);
+    }
+  }
+
+  return { cosTable, sinTable };
+})();
+
+type UIState = "idle" | "preparing" | "recording" | "ready" | "inferencing" | "error";
+
+interface Prediction {
+  idx: number;
+  label: string;
+  common: string;
+  conf: number;
+}
+
+interface InferWindow {
+  window_index: number;
+  start_s: number;
+  end_s: number;
+  predictions: Prediction[];
+  latency_us?: number;
+  spec_us?: number;
+  cnn_nj?: number;
+  spec_nj?: number;
+  total_nj?: number;
+}
+
+interface InferResponse {
+  ok?: boolean;
+  windows?: InferWindow[];
+  error?: string;
+  queueDepth?: number;
+}
+
+interface HealthStatus {
+  online: boolean;
+  lastSeenMs: number | null;
+  lastError: string | null;
+  queueDepth: number;
+  busy: boolean;
+}
+
+interface SpectrogramData {
+  width: number;
+  height: number;
+  pixels: Uint8ClampedArray;
+  durationSec: number;
+}
+
+interface PreparedClip {
+  fileName: string;
+  durationSec: number;
+  originalDurationSec: number;
+  sampleRate: number;
+  samples: Float32Array;
+  wavBlob: Blob;
+  spectrogram: SpectrogramData;
+  wasTrimmed: boolean;
+}
+
+interface StubClass {
+  idx: number;
+  label: string;
+  common: string;
+  profile: [number, number, number];
+}
+
+const STUB_CLASSES: StubClass[] = [
+  { idx: 31, label: "non_bird", common: "Background", profile: [0.08, 0.14, 0.12] },
+  { idx: 10, label: "coloeus_monedula", common: "Jackdaw", profile: [0.48, 0.36, 0.43] },
+  { idx: 13, label: "corvus_corax", common: "Common Raven", profile: [0.52, 0.28, 0.33] },
+  { idx: 14, label: "corvus_cornix", common: "Hooded Crow", profile: [0.55, 0.31, 0.4] },
+  { idx: 5, label: "apus_apus", common: "Swift", profile: [0.36, 0.62, 0.7] },
+  { idx: 1, label: "acrocephalus_schoenobaenus", common: "Sedge Warbler", profile: [0.42, 0.56, 0.62] },
+  { idx: 47, label: "troglodytes_troglodytes", common: "Wren", profile: [0.3, 0.67, 0.74] },
+  { idx: 48, label: "turdus_merula", common: "Blackbird", profile: [0.46, 0.4, 0.5] },
+  { idx: 50, label: "tyto_alba", common: "Barn Owl", profile: [0.23, 0.52, 0.59] },
+];
+
+function formatLabel(prediction: Prediction): string {
+  const text = prediction.common || prediction.label;
+  return text
+    .replaceAll("_", " ")
+    .replaceAll("-", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function encodeMono16BitWav(samples: Float32Array, sampleRate: number): Blob {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  const writeAscii = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i++) {
+      view.setUint8(offset + i, value.charCodeAt(i));
+    }
+  };
+
+  const dataBytes = samples.length * 2;
+  writeAscii(0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, "data");
+  view.setUint32(40, dataBytes, true);
+
+  for (let i = 0; i < samples.length; i++) {
+    const clamped = Math.max(-1, Math.min(1, samples[i] ?? 0));
+    const int16 = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+    view.setInt16(44 + i * 2, Math.round(int16), true);
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function formatTrimNotice(originalDurationSec: number): string {
+  return `Input was ${originalDurationSec.toFixed(1)}s and was trimmed to ${MAX_AUDIO_SECONDS}s for this trial view.`;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function seededNoise(seed: number): number {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function extractWindowFeatures(samples: Float32Array): [number, number, number] {
+  const n = Math.max(1, samples.length);
+  let sumSq = 0;
+  let zc = 0;
+  let diffSum = 0;
+  let prev = samples[0] ?? 0;
+
+  for (let i = 0; i < n; i++) {
+    const value = samples[i] ?? 0;
+    sumSq += value * value;
+    if ((prev >= 0 && value < 0) || (prev < 0 && value >= 0)) {
+      zc += 1;
+    }
+    if (i > 0) {
+      diffSum += Math.abs(value - prev);
+    }
+    prev = value;
+  }
+
+  const rms = Math.sqrt(sumSq / n);
+  const energy = clamp01(rms * 6.2);
+  const texture = clamp01((zc / n) * 9);
+  const brightness = clamp01((diffSum / n) * 7.5);
+  return [energy, texture, brightness];
+}
+
+function scoreStubClass(
+  classProfile: StubClass,
+  features: [number, number, number],
+  windowIndex: number
+): number {
+  const [energy, texture, brightness] = features;
+  const [targetEnergy, targetTexture, targetBrightness] = classProfile.profile;
+
+  const distance =
+    Math.abs(energy - targetEnergy) * 0.9 +
+    Math.abs(texture - targetTexture) * 0.75 +
+    Math.abs(brightness - targetBrightness) * 0.7;
+
+  let score = 1.35 - distance;
+  const noise = seededNoise(windowIndex * 31 + classProfile.idx * 7);
+  score += (noise - 0.5) * 0.14;
+
+  if (classProfile.label === "non_bird") {
+    if (energy < 0.18) score += 0.35;
+    if (energy > 0.36) score -= 0.12;
+  }
+
+  return Math.max(0.04, score);
+}
+
+function buildStubWindows(clip: PreparedClip): InferWindow[] {
+  const windowsCount = Math.max(1, Math.ceil(clip.durationSec / WINDOW_SECONDS));
+  const windows: InferWindow[] = [];
+
+  for (let i = 0; i < windowsCount; i++) {
+    const start_s = i * WINDOW_SECONDS;
+    const end_s = Math.min(clip.durationSec, start_s + WINDOW_SECONDS);
+    const startSample = Math.floor(start_s * SAMPLE_RATE);
+    const endSample = Math.max(startSample + 1, Math.floor(end_s * SAMPLE_RATE));
+    const windowSamples = clip.samples.slice(startSample, endSample);
+    const features = extractWindowFeatures(windowSamples);
+
+    const ranked = STUB_CLASSES
+      .map((cls) => ({
+        cls,
+        score: scoreStubClass(cls, features, i + 1),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+
+    const scoreSum = ranked.reduce((sum, row) => sum + row.score, 0);
+    const predictions: Prediction[] = ranked.map((row) => ({
+      idx: row.cls.idx,
+      label: row.cls.label,
+      common: row.cls.common,
+      conf: Number(((row.score / scoreSum) * 100).toFixed(1)),
+    }));
+
+    const perfSeed = i + 1;
+    const latency_us = Math.round(3000 + seededNoise(perfSeed * 11) * 1100);
+    const spec_us = Math.round(64000 + seededNoise(perfSeed * 17) * 9000);
+    const cnn_nj = Math.round(14000 + seededNoise(perfSeed * 23) * 2800);
+    const total_nj = Math.round(660000 + seededNoise(perfSeed * 29) * 90000);
+
+    windows.push({
+      window_index: i,
+      start_s,
+      end_s,
+      predictions,
+      latency_us,
+      spec_us,
+      cnn_nj,
+      total_nj,
+    });
+  }
+
+  return windows;
+}
+
+async function decodeTrimAndResample(
+  audioBlob: Blob
+): Promise<{ samples: Float32Array; originalDurationSec: number; wasTrimmed: boolean }> {
+  const arrayBuffer = await audioBlob.arrayBuffer();
+  const context = new AudioContext();
+
   try {
-    await access(path.join(process.cwd(), "public", "demo.mp4"));
-    return true;
-  } catch {
-    return false;
+    const decoded = await context.decodeAudioData(arrayBuffer.slice(0));
+    const originalDurationSec = decoded.duration;
+    const targetDurationSec = Math.min(originalDurationSec, MAX_AUDIO_SECONDS);
+    const targetLength = Math.max(1, Math.floor(targetDurationSec * SAMPLE_RATE));
+
+    const offline = new OfflineAudioContext(1, targetLength, SAMPLE_RATE);
+    const source = offline.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offline.destination);
+    source.start(0, 0, targetDurationSec);
+    const rendered = await offline.startRendering();
+
+    const mono = rendered.getChannelData(0);
+    const samples = new Float32Array(mono.length);
+    samples.set(mono);
+
+    return {
+      samples,
+      originalDurationSec,
+      wasTrimmed: originalDurationSec > MAX_AUDIO_SECONDS + 0.001,
+    };
+  } finally {
+    await context.close();
   }
 }
 
-export default async function DemoPage() {
-  const videoReady = await hasDemoVideo();
+function samplePalette(t: number): [number, number, number] {
+  const stops = [
+    { t: 0.0, c: [8, 27, 57] as [number, number, number] },
+    { t: 0.35, c: [37, 89, 164] as [number, number, number] },
+    { t: 0.72, c: [114, 182, 238] as [number, number, number] },
+    { t: 1.0, c: [244, 177, 131] as [number, number, number] },
+  ];
+
+  for (let i = 0; i < stops.length - 1; i++) {
+    const a = stops[i];
+    const b = stops[i + 1];
+    if (t >= a.t && t <= b.t) {
+      const ratio = (t - a.t) / (b.t - a.t);
+      return [
+        Math.round(a.c[0] + (b.c[0] - a.c[0]) * ratio),
+        Math.round(a.c[1] + (b.c[1] - a.c[1]) * ratio),
+        Math.round(a.c[2] + (b.c[2] - a.c[2]) * ratio),
+      ];
+    }
+  }
+
+  return stops[stops.length - 1].c;
+}
+
+function buildSpectrogram(samples: Float32Array): SpectrogramData {
+  const durationSec = samples.length / SAMPLE_RATE;
+  const width = Math.max(180, Math.min(420, Math.round(durationSec * 32)));
+  const height = SPECTROGRAM_BINS;
+  const magnitudes = new Float32Array(width * height);
+
+  let minLog = Number.POSITIVE_INFINITY;
+  let maxLog = Number.NEGATIVE_INFINITY;
+
+  for (let x = 0; x < width; x++) {
+    const center = Math.floor(((x + 0.5) * samples.length) / width);
+    const start = center - FFT_SIZE / 2;
+
+    for (let k = 0; k < height; k++) {
+      let real = 0;
+      let imag = 0;
+      const cosRow = trigTables.cosTable[k];
+      const sinRow = trigTables.sinTable[k];
+
+      for (let n = 0; n < FFT_SIZE; n++) {
+        const sampleIdx = start + n;
+        const sample = sampleIdx >= 0 && sampleIdx < samples.length ? samples[sampleIdx] : 0;
+        const value = sample * hannWindow[n];
+        real += value * cosRow[n];
+        imag -= value * sinRow[n];
+      }
+
+      const magnitude = Math.sqrt(real * real + imag * imag);
+      const logMag = Math.log10(magnitude + 1e-7);
+      magnitudes[k * width + x] = logMag;
+      if (logMag < minLog) minLog = logMag;
+      if (logMag > maxLog) maxLog = logMag;
+    }
+  }
+
+  const range = Math.max(1e-6, maxLog - minLog);
+  const pixels = new Uint8ClampedArray(width * height * 4);
+
+  for (let y = 0; y < height; y++) {
+    const srcBin = height - 1 - y;
+    for (let x = 0; x < width; x++) {
+      const value = magnitudes[srcBin * width + x];
+      const normalized = Math.max(0, Math.min(1, (value - minLog) / range));
+      const boosted = Math.pow(normalized, 0.75);
+      const [r, g, b] = samplePalette(boosted);
+      const idx = (y * width + x) * 4;
+      pixels[idx] = r;
+      pixels[idx + 1] = g;
+      pixels[idx + 2] = b;
+      pixels[idx + 3] = 255;
+    }
+  }
+
+  return { width, height, pixels, durationSec };
+}
+
+function drawSpectrogramCanvas(canvas: HTMLCanvasElement, spectrogram: SpectrogramData) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const offscreen = document.createElement("canvas");
+  offscreen.width = spectrogram.width;
+  offscreen.height = spectrogram.height;
+  const offCtx = offscreen.getContext("2d");
+  if (!offCtx) return;
+
+  offCtx.putImageData(
+    new ImageData(spectrogram.pixels, spectrogram.width, spectrogram.height),
+    0,
+    0
+  );
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(offscreen, 0, 0, canvas.width, canvas.height);
+
+  if (spectrogram.durationSec > 0) {
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.lineWidth = 1;
+    for (let marker = 0; marker <= spectrogram.durationSec + 0.001; marker += WINDOW_SECONDS) {
+      const x = (marker / spectrogram.durationSec) * canvas.width;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, canvas.height);
+      ctx.stroke();
+    }
+  }
+}
+
+export default function TrialPage() {
+  const [uiState, setUiState] = useState<UIState>("idle");
+  const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [clip, setClip] = useState<PreparedClip | null>(null);
+  const [windows, setWindows] = useState<InferWindow[]>([]);
+  const [isStubResult, setIsStubResult] = useState(false);
+  const [activeWindow, setActiveWindow] = useState(0);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [noticeMsg, setNoticeMsg] = useState<string | null>(null);
+  const [recordingMs, setRecordingMs] = useState(0);
+  const [inferProgress, setInferProgress] = useState(0);
+  const [isRecording, setIsRecording] = useState(false);
+
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<BlobPart[]>([]);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const inferTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const isOnline = health?.online ?? false;
+  const queueDepth = health?.queueDepth ?? 0;
+  const expectedWindows = clip ? Math.max(1, Math.ceil(clip.durationSec / WINDOW_SECONDS)) : 0;
+  const selectedWindow = windows[activeWindow] ?? null;
+
+  const timelineSummary = useMemo(() => {
+    if (windows.length === 0) return "No predictions yet.";
+    return windows
+      .map((window) => {
+        const top = window.predictions[0];
+        const label = top ? formatLabel(top) : "No prediction";
+        return `${window.start_s.toFixed(0)}–${window.end_s.toFixed(0)}s: ${label}`;
+      })
+      .join("  •  ");
+  }, [windows]);
+
+  const clearTimers = useCallback(() => {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    if (inferTimerRef.current) {
+      clearInterval(inferTimerRef.current);
+      inferTimerRef.current = null;
+    }
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearTimers();
+      mediaRecorderRef.current = null;
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, [clearTimers]);
+
+  useEffect(() => {
+    async function pollHealth() {
+      try {
+        const response = await fetch("/api/health");
+        if (response.ok) {
+          setHealth((await response.json()) as HealthStatus);
+        }
+      } catch {
+        // Keep last state.
+      }
+    }
+
+    pollHealth();
+    const id = setInterval(pollHealth, 10_000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!clip || !canvasRef.current) return;
+    drawSpectrogramCanvas(canvasRef.current, clip.spectrogram);
+  }, [clip]);
+
+  const prepareClip = useCallback(async (blob: Blob, name: string) => {
+    setUiState("preparing");
+    setErrorMsg(null);
+    setNoticeMsg(null);
+    setWindows([]);
+    setIsStubResult(false);
+    setActiveWindow(0);
+
+    try {
+      const { samples, originalDurationSec, wasTrimmed } = await decodeTrimAndResample(blob);
+      const spectrogram = buildSpectrogram(samples);
+      const wavBlob = encodeMono16BitWav(samples, SAMPLE_RATE);
+
+      setClip({
+        fileName: name,
+        durationSec: samples.length / SAMPLE_RATE,
+        originalDurationSec,
+        sampleRate: SAMPLE_RATE,
+        samples,
+        wavBlob,
+        spectrogram,
+        wasTrimmed,
+      });
+
+      if (wasTrimmed) {
+        setNoticeMsg(formatTrimNotice(originalDurationSec));
+      }
+
+      setUiState("ready");
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Unable to decode this audio file.");
+      setUiState("error");
+    }
+  }, []);
+
+  const handleUpload = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      await prepareClip(file, file.name);
+      event.target.value = "";
+    },
+    [prepareClip]
+  );
+
+  const startRecording = useCallback(async () => {
+    if (isRecording || uiState === "inferencing" || uiState === "preparing") return;
+
+    try {
+      setErrorMsg(null);
+      setNoticeMsg(null);
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      mediaStreamRef.current = stream;
+      recordingChunksRef.current = [];
+
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+      setUiState("recording");
+      setRecordingMs(0);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordingChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        setErrorMsg("Recording failed. Please check microphone permissions and try again.");
+        setIsRecording(false);
+        setUiState("error");
+      };
+
+      recorder.onstop = async () => {
+        setIsRecording(false);
+        setRecordingMs(0);
+
+        if (recordTimerRef.current) {
+          clearInterval(recordTimerRef.current);
+          recordTimerRef.current = null;
+        }
+
+        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+
+        if (recordingChunksRef.current.length === 0) {
+          setErrorMsg("No audio was captured.");
+          setUiState("error");
+          return;
+        }
+
+        const mimeType = recorder.mimeType || "audio/webm";
+        const recordingBlob = new Blob(recordingChunksRef.current, { type: mimeType });
+        await prepareClip(recordingBlob, "recording.webm");
+      };
+
+      recorder.start();
+      const startedAt = performance.now();
+      recordTimerRef.current = setInterval(() => {
+        const elapsed = performance.now() - startedAt;
+        setRecordingMs(Math.min(elapsed, MAX_RECORD_MS));
+        if (elapsed >= MAX_RECORD_MS) {
+          stopRecording();
+        }
+      }, 100);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Unable to start recording.");
+      setUiState("error");
+      setIsRecording(false);
+    }
+  }, [isRecording, prepareClip, stopRecording, uiState]);
+
+  const runInference = useCallback(async () => {
+    if (!clip || uiState === "inferencing" || uiState === "preparing") return;
+    const baseNotice = clip.wasTrimmed ? formatTrimNotice(clip.originalDurationSec) : null;
+    const setSimulatedResult = (reason: string) => {
+      const simulatedWindows = buildStubWindows(clip);
+      setWindows(simulatedWindows);
+      setIsStubResult(true);
+      setActiveWindow(0);
+      setErrorMsg(null);
+      setNoticeMsg(baseNotice ? `${baseNotice} ${reason}` : reason);
+      setInferProgress(100);
+      setUiState("ready");
+      setTimeout(() => setInferProgress(0), 250);
+    };
+
+    if (!isOnline) {
+      setSimulatedResult("Device is offline, so these predictions are simulated for preview.");
+      return;
+    }
+
+    setErrorMsg(null);
+    setUiState("inferencing");
+    setInferProgress(8);
+
+    inferTimerRef.current = setInterval(() => {
+      setInferProgress((prev) => Math.min(prev + 6, 93));
+    }, 150);
+
+    try {
+      const payload = new FormData();
+      payload.append("audio", clip.wavBlob, `${clip.fileName.replace(/\.[^.]+$/, "") || "clip"}_3s.wav`);
+
+      const response = await fetch("/api/infer", {
+        method: "POST",
+        body: payload,
+      });
+      const data = (await response.json()) as InferResponse;
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error ?? `HTTP ${response.status}`);
+      }
+
+      const nextWindows = data.windows ?? [];
+      if (nextWindows.length === 0) {
+        setSimulatedResult("The API returned no windows, so these predictions are simulated for preview.");
+        return;
+      }
+
+      setWindows(nextWindows);
+      setIsStubResult(false);
+      setActiveWindow(0);
+      setNoticeMsg(baseNotice);
+      setInferProgress(100);
+      setUiState("ready");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Inference request failed.";
+      setSimulatedResult(`API unavailable (${message}). Showing simulated predictions for preview.`);
+    } finally {
+      if (inferTimerRef.current) {
+        clearInterval(inferTimerRef.current);
+        inferTimerRef.current = null;
+      }
+      setTimeout(() => setInferProgress(0), 250);
+    }
+  }, [clip, isOnline, uiState]);
 
   return (
-    <main className="min-h-screen bg-background text-slate-900">
+    <main className="min-h-screen bg-background text-foreground">
       <SiteNav className="border-b border-slate-200 bg-card/90 backdrop-blur" />
 
-      <section className="mx-auto w-full max-w-6xl px-6 py-12 md:px-8">
-        <p className="text-xs font-medium tracking-[0.18em] text-slate-500 uppercase">Demo</p>
-        <h1 className="mt-3 text-4xl text-[#0b235c] md:text-6xl">Live Demo Video</h1>
-        <p className="mt-4 max-w-3xl text-slate-700 md:text-lg">
-          This walkthrough shows the MicroBird pipeline from recording to top predictions on MAX78002, including the
-          on-device spectrogram path and low-energy CNN inference.
-        </p>
+      <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10 md:px-8">
+        <header className="space-y-2">
+          <div className="inline-flex items-center gap-2 rounded-full bg-card px-3 py-1 ring-1 ring-[#afc4ea]">
+            <Bird className="h-4 w-4 text-[#0f2c70]" />
+            <span className="text-xs font-medium tracking-wide text-[#0f2c70] uppercase">Live Trial</span>
+          </div>
+          <h1 className="text-4xl text-[#0b235c] md:text-5xl">Run Inference On Your Audio</h1>
+          <p className="max-w-3xl text-base text-slate-700 md:text-lg">
+            Upload or record up to {MAX_AUDIO_SECONDS} seconds. We compute a frontend spectrogram for visualization
+            and map each 3-second prediction window directly onto it.
+          </p>
+        </header>
 
-        <div className="mt-10 overflow-hidden rounded-3xl border border-slate-200 bg-slate-950 shadow-lg">
-          {videoReady ? (
-            <video className="aspect-video w-full" controls preload="metadata" poster="/birdies.png">
-              <source src="/demo.mp4" type="video/mp4" />
-              Your browser does not support video playback.
-            </video>
-          ) : (
-            <div className="flex aspect-video items-center justify-center px-8 text-center text-slate-200">
-              <div>
-                <p className="text-xl font-medium">Demo video not added yet</p>
-                <p className="mt-3 text-sm text-slate-400">
-                  Add <code className="rounded bg-slate-800 px-1.5 py-0.5">public/demo.mp4</code> and this page will
-                  play it automatically.
+        <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
+          <Card className="rounded-2xl ring-1 ring-[#afc4ea]">
+            <CardHeader>
+              <CardTitle className="text-[#0b235c]">Audio Input</CardTitle>
+              <CardDescription>
+                Max length: {MAX_AUDIO_SECONDS}s ({Math.ceil(MAX_AUDIO_SECONDS / WINDOW_SECONDS)} windows).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="audio/*"
+                className="hidden"
+                onChange={handleUpload}
+              />
+
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="outline"
+                  className="border-[#8fabdf] bg-white/80 text-[#0a1b39] hover:bg-[#e7eefc]"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uiState === "preparing" || uiState === "inferencing" || isRecording}
+                >
+                  Upload Audio
+                </Button>
+
+                {!isRecording ? (
+                  <Button
+                    variant="outline"
+                    className="border-[#8fabdf] bg-white/80 text-[#0a1b39] hover:bg-[#e7eefc]"
+                    onClick={startRecording}
+                    disabled={uiState === "preparing" || uiState === "inferencing"}
+                  >
+                    <Mic className="h-4 w-4" />
+                    Record {MAX_AUDIO_SECONDS}s
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    className="border-[#efb7aa] bg-white/80 text-[#8f2a1a] hover:bg-[#ffe9e5]"
+                    onClick={stopRecording}
+                  >
+                    <MicOff className="h-4 w-4" />
+                    Stop Recording
+                  </Button>
+                )}
+
+                <Button
+                  className="bg-[#0a1b39] text-white hover:bg-[#18366f]"
+                  onClick={runInference}
+                  disabled={!clip || uiState === "preparing" || uiState === "inferencing" || isRecording || !isOnline}
+                >
+                  Run Inference
+                </Button>
+              </div>
+
+              {isRecording && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm text-slate-700">
+                    <span>Recording...</span>
+                    <span>{(recordingMs / 1000).toFixed(1)}s / {MAX_AUDIO_SECONDS}s</span>
+                  </div>
+                  <Progress value={(recordingMs / MAX_RECORD_MS) * 100} className="h-2" />
+                </div>
+              )}
+
+              {uiState === "inferencing" && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm text-slate-700">
+                    <span>Running inference...</span>
+                    <span>{Math.round(inferProgress)}%</span>
+                  </div>
+                  <Progress value={inferProgress} className="h-2" />
+                </div>
+              )}
+
+              {clip && (
+                <div className="grid gap-3 rounded-xl border border-[#afc4ea] bg-[#f4f8ff] p-3 text-sm text-slate-700 sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs tracking-wide text-slate-500 uppercase">Clip</p>
+                    <p className="font-medium">{clip.fileName}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs tracking-wide text-slate-500 uppercase">Duration</p>
+                    <p className="font-medium">{clip.durationSec.toFixed(2)} s</p>
+                  </div>
+                  <div>
+                    <p className="text-xs tracking-wide text-slate-500 uppercase">Expected windows</p>
+                    <p className="font-medium">{expectedWindows}</p>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl ring-1 ring-[#afc4ea]">
+            <CardHeader>
+              <CardTitle className="text-[#0b235c]">Device Status</CardTitle>
+              <CardDescription>Connection and queue state for MAX78002 runtime.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center gap-2 text-sm">
+                <span
+                  className={cn(
+                    "inline-block h-2.5 w-2.5 rounded-full",
+                    isOnline ? "bg-emerald-500" : "bg-rose-500"
+                  )}
+                />
+                <span className="font-medium text-slate-800">{isOnline ? "Device online" : "Device offline"}</span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
+                <Badge variant="secondary" className="bg-white ring-1 ring-[#c7d8f7]">
+                  <Layers className="mr-1 h-3.5 w-3.5" />
+                  Queue: {queueDepth}
+                </Badge>
+                {health?.busy && <Badge variant="secondary" className="bg-white ring-1 ring-[#c7d8f7]">Busy</Badge>}
+              </div>
+
+              <div className="rounded-xl border border-[#afc4ea] bg-[#f4f8ff] p-3 text-sm text-slate-700">
+                <p className="font-medium text-[#0b235c]">How this API works</p>
+                <p className="mt-2">
+                  We send the clip to <code className="rounded bg-white px-1">/api/infer</code>. The backend forwards
+                  it to BirdSpec, which splits audio into 3-second windows and returns top predictions per window with
+                  latency/energy metrics.
                 </p>
               </div>
-            </div>
-          )}
+            </CardContent>
+          </Card>
         </div>
 
-        <div className="mt-8 flex flex-wrap gap-3">
-          <Link
-            href="/trial"
-            className="rounded-full bg-[#0f2c70] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#143a93]"
-          >
-            Open trial page
-          </Link>
-          <Link
-            href="/report"
-            className="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-50"
-          >
-            Read project report
-          </Link>
-        </div>
+        {errorMsg && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{errorMsg}</AlertDescription>
+          </Alert>
+        )}
+
+        {noticeMsg && (
+          <Alert className="border-[#f0caa8] bg-[#fff4ea] text-[#6f4a2b]">
+            <AlertDescription>{noticeMsg}</AlertDescription>
+          </Alert>
+        )}
+
+        <Card className="rounded-2xl ring-1 ring-[#afc4ea]">
+          <CardHeader>
+            <CardTitle className="text-[#0b235c]">Spectrogram + Window Mapping</CardTitle>
+            <CardDescription>
+              Frontend-only spectrogram visualization. Click a highlighted window band to inspect that prediction.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="relative overflow-hidden rounded-xl border-2 border-[#8fabdf] bg-[#091a3a]">
+              <canvas ref={canvasRef} width={960} height={260} className="h-64 w-full" />
+
+              {clip &&
+                windows.map((window, index) => {
+                  const left = (window.start_s / clip.durationSec) * 100;
+                  const width = ((window.end_s - window.start_s) / clip.durationSec) * 100;
+                  return (
+                    <button
+                      key={`${window.window_index}-${window.start_s}`}
+                      type="button"
+                      onClick={() => setActiveWindow(index)}
+                      className={cn(
+                        "absolute top-0 bottom-0 cursor-pointer border-x transition-colors",
+                        activeWindow === index
+                          ? "border-[#f4b183] bg-[#f4b183]/25"
+                          : "border-white/25 bg-[#0a1b39]/5 hover:bg-[#2f63d9]/15"
+                      )}
+                      style={{ left: `${left}%`, width: `${width}%` }}
+                      aria-label={`Select window ${index + 1}`}
+                    />
+                  );
+                })}
+            </div>
+
+            <div className="flex flex-wrap gap-2 text-xs text-slate-700">
+              {windows.map((window, index) => (
+                <Badge
+                  key={`${window.window_index}-badge`}
+                  variant="secondary"
+                  className={cn(
+                    "cursor-pointer bg-white ring-1 ring-[#c7d8f7]",
+                    activeWindow === index && "bg-[#f4b183]/30 ring-[#f4b183]"
+                  )}
+                  onClick={() => setActiveWindow(index)}
+                >
+                  W{index + 1}: {window.start_s.toFixed(0)}-{window.end_s.toFixed(0)}s
+                </Badge>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-2xl ring-1 ring-[#afc4ea]">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-[#0b235c]">
+              Per-Window Predictions
+              {isStubResult && (
+                <Badge variant="secondary" className="bg-[#fff4ea] text-[#7b4f2c] ring-1 ring-[#f0caa8]">
+                  Simulated
+                </Badge>
+              )}
+            </CardTitle>
+            <CardDescription>{timelineSummary}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {windows.length === 0 ? (
+              <p className="text-sm text-slate-600">
+                Run inference to populate predictions for each 3-second window.
+              </p>
+            ) : (
+              <>
+                {selectedWindow && (
+                  <div className="rounded-xl border border-[#afc4ea] bg-[#f4f8ff] p-4">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-medium text-[#0b235c]">
+                        Window {activeWindow + 1} ({selectedWindow.start_s.toFixed(1)}s-{selectedWindow.end_s.toFixed(1)}s)
+                      </p>
+                      <div className="flex items-center gap-2 text-xs text-slate-600">
+                        {selectedWindow.latency_us != null && (
+                          <span className="inline-flex items-center gap-1">
+                            <Clock className="h-3.5 w-3.5" />
+                            {(selectedWindow.latency_us / 1000).toFixed(1)} ms CNN
+                          </span>
+                        )}
+                        {selectedWindow.total_nj != null && (
+                          <span>{(selectedWindow.total_nj / 1_000_000).toFixed(3)} mJ total</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      {selectedWindow.predictions.map((prediction, rank) => {
+                        const confidence = Math.max(0, Math.min(100, prediction.conf));
+                        return (
+                          <div key={`${selectedWindow.window_index}-${prediction.idx}`}>
+                            <div className="mb-1 flex items-center justify-between text-sm">
+                              <p className="font-medium text-slate-800">
+                                {rank + 1}. {formatLabel(prediction)}
+                              </p>
+                              <p className="text-slate-600">{confidence.toFixed(1)}%</p>
+                            </div>
+                            <div className="h-2 rounded-full bg-white ring-1 ring-[#d4e1f9]">
+                              <div
+                                className="h-full rounded-full bg-[#2f63d9]"
+                                style={{ width: `${confidence}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {windows.map((window, index) => {
+                    const top = window.predictions[0];
+                    return (
+                      <button
+                        key={`${window.window_index}-card`}
+                        type="button"
+                        onClick={() => setActiveWindow(index)}
+                        className={cn(
+                          "rounded-xl border bg-white/85 p-3 text-left transition-colors",
+                          activeWindow === index
+                            ? "border-[#f4b183] ring-2 ring-[#f4b183]/40"
+                            : "border-[#c7d8f7] hover:bg-[#edf3ff]"
+                        )}
+                      >
+                        <p className="text-xs tracking-wide text-slate-500 uppercase">
+                          Window {index + 1} ({window.start_s.toFixed(0)}-{window.end_s.toFixed(0)}s)
+                        </p>
+                        <p className="mt-1 text-sm font-medium text-[#0b235c]">
+                          {top ? formatLabel(top) : "No prediction"}
+                        </p>
+                        <p className="text-xs text-slate-600">
+                          {top ? `${top.conf.toFixed(1)}% confidence` : "No confidence data"}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
       </section>
     </main>
   );
