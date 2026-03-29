@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Lora, Ovo } from "next/font/google";
+import { SiteFooter } from "@/components/site-footer";
 import "./globals.css";
 
 const ovo = Ovo({
@@ -34,7 +35,10 @@ export default function RootLayout({
       <body
         className={`${ovo.variable} ${lora.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <div className="flex min-h-screen flex-col">
+          <div className="flex-1">{children}</div>
+          <SiteFooter />
+        </div>
       </body>
     </html>
   );

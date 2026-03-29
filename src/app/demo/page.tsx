@@ -388,8 +388,9 @@ function drawSpectrogramCanvas(canvas: HTMLCanvasElement, spectrogram: Spectrogr
   const offCtx = offscreen.getContext("2d");
   if (!offCtx) return;
 
+  const imagePixels = Uint8ClampedArray.from(spectrogram.pixels);
   offCtx.putImageData(
-    new ImageData(spectrogram.pixels, spectrogram.width, spectrogram.height),
+    new ImageData(imagePixels, spectrogram.width, spectrogram.height),
     0,
     0
   );

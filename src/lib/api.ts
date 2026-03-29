@@ -139,7 +139,8 @@ export async function inferAudioBlob(
   const topK = options?.topK ?? 3;
 
   const form = new FormData();
-  form.append("audio", new Blob([audioBuffer], { type: mimeType }), filename);
+  const audioBytes = Uint8Array.from(audioBuffer);
+  form.append("audio", new Blob([audioBytes], { type: mimeType }), filename);
 
   const resp = await fetch(`${API_BASE}/api/infer?top=${topK}&metrics=1`, {
     method: "POST",
