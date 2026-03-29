@@ -21,10 +21,10 @@ export default async function ReportPage() {
 
       <section className="mx-auto w-full max-w-6xl px-6 py-12 md:px-8">
         <p className="text-xs font-medium tracking-[0.18em] text-slate-500 uppercase">Paper</p>
-        <h1 className="font-display mt-3 text-4xl text-[#0b235c] md:text-6xl">Report</h1>
+        <h1 className="mt-3 text-4xl text-[#0b235c] md:text-6xl">Report</h1>
         <p className="mt-4 max-w-3xl text-slate-700 md:text-lg">
-          This report documents the model design, dataset work, quantization-aware training, firmware integration,
-          and measured performance on the MAX78002 target.
+          This report documents MicroBird: model design, dataset curation, QAT workflow, firmware integration, and
+          measured performance on MAX78002.
         </p>
 
         <div className="mt-8 flex flex-wrap gap-3">
@@ -61,13 +61,12 @@ export default async function ReportPage() {
         </div>
 
         <div className="mt-10 rounded-3xl bg-card p-6 shadow-sm ring-1 ring-slate-200 md:p-8">
-          <h2 className="font-display text-3xl text-[#0b235c]">Abstract</h2>
+          <h2 className="text-3xl text-[#0b235c]">Abstract</h2>
           <p className="mt-4 text-slate-700">
-            Bird populations are under pressure, and continuous monitoring is difficult with manual surveys alone.
-            This project demonstrates a practical on-device bird-call classifier that captures short audio clips,
-            transforms them into compact spectrogram features, and performs inference directly on an embedded neural
-            accelerator. By avoiding cloud inference, the system reduces latency, bandwidth requirements, and energy
-            cost while still returning useful top-3 predictions for field deployment.
+            MicroBird is a complete end-to-end embedded bird-call classification system for Irish species monitoring.
+            It combines regional dataset curation, 64x128 log-mel preprocessing, quantization-aware training, and
+            MAX78002 deployment. The best validated model reaches 83.01% top-1 validation accuracy, with
+            hardware-tested inference at 3.5 ms and 15.3 µJ on the CNN accelerator.
           </p>
         </div>
 

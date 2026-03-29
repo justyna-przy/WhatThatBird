@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { Cormorant_Garamond, Geist, Geist_Mono } from "next/font/google";
+import { Geist_Mono, Lora, Ovo } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const ovo = Ovo({
+  variable: "--font-ovo",
   subsets: ["latin"],
+  weight: "400",
 });
 
 const geistMono = Geist_Mono({
@@ -12,15 +13,15 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const displayFont = Cormorant_Garamond({
-  variable: "--font-display",
+const lora = Lora({
+  variable: "--font-lora",
   subsets: ["latin"],
-  weight: ["500", "600", "700"],
+  weight: ["400", "500", "700"],
 });
 
 export const metadata: Metadata = {
-  title: "WhatThatBird",
-  description: "On-device Irish bird call classifier — MAX78002 neural-network accelerator",
+  title: "MicroBird",
+  description: "Microjoule-range embedded bird-call classification on MAX78002",
 };
 
 export default function RootLayout({
@@ -31,7 +32,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${displayFont.variable} antialiased`}
+        className={`${ovo.variable} ${lora.variable} ${geistMono.variable} antialiased`}
       >
         {children}
       </body>

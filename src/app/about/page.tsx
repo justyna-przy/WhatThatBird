@@ -23,11 +23,11 @@ export default async function AboutPage() {
 
       <section className="mx-auto w-full max-w-6xl px-6 py-12 md:px-8">
         <p className="text-xs font-medium tracking-[0.18em] text-slate-500 uppercase">About</p>
-        <h1 className="font-display mt-3 text-4xl text-[#0b235c] md:text-6xl">Method and Architecture</h1>
+        <h1 className="mt-3 text-4xl text-[#0b235c] md:text-6xl">Method and Architecture</h1>
 
         <div className="mt-10 grid gap-8 lg:grid-cols-[0.9fr_1.1fr]">
           <div className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-slate-200">
-            <h2 className="font-display text-3xl text-[#0b235c]">Bio</h2>
+            <h2 className="text-3xl text-[#0b235c]">Bio</h2>
             <div className="mt-4 flex items-center gap-4">
               {photoReady ? (
                 <Image
@@ -53,14 +53,14 @@ export default async function AboutPage() {
               </div>
             </div>
             <p className="mt-5 text-slate-700">
-              I built this system as an end-to-end prototype that combines embedded audio capture, spectrogram
-              processing, and an on-device CNN for bird-call recognition. The goal was to make inference fast and
-              power-efficient without needing cloud compute.
+              I built MicroBird as an end-to-end pipeline combining embedded audio capture, on-device spectrogram
+              processing, and a quantized CNN on MAX78002. The goal was to deliver practical bird-call classification
+              with low energy and no cloud dependency.
             </p>
           </div>
 
           <div className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-slate-200">
-            <h2 className="font-display text-3xl text-[#0b235c]">System flow</h2>
+            <h2 className="text-3xl text-[#0b235c]">System flow</h2>
             <div className="mt-5 flex flex-wrap items-center gap-2">
               {pipeline.map((step, index) => (
                 <div key={step} className="flex items-center gap-2">
@@ -80,21 +80,22 @@ export default async function AboutPage() {
 
         <div className="mt-8 grid gap-6 md:grid-cols-2">
           <div className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-slate-200">
-            <h3 className="font-display text-3xl text-[#0b235c]">Model</h3>
+            <h3 className="text-3xl text-[#0b235c]">Model</h3>
             <ul className="mt-4 space-y-2 text-slate-700">
               <li>ResNet-style architecture</li>
               <li>Quantization-aware training (QAT)</li>
-              <li>50 classes (49 species + non-bird)</li>
+              <li>51 classes (50 species + non-bird)</li>
               <li>Trained on XC-ML bird dataset</li>
             </ul>
           </div>
           <div className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-slate-200">
-            <h3 className="font-display text-3xl text-[#0b235c]">Accuracy</h3>
+            <h3 className="text-3xl text-[#0b235c]">Accuracy</h3>
             <p className="mt-4 text-slate-700">
-              Add your final evaluation metric here once your latest experiment is locked in.
+              Best validated model (DW2) reached 83.01% top-1 QAT validation accuracy. Hardware-confirmed W3 reached
+              80.59% top-1 and 91.53% top-3 on the held-out test set.
             </p>
             <p className="mt-4 inline-flex rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700">
-              Top-1 accuracy: TBD%
+              Test accuracy (W3): 80.59% top-1 / 91.53% top-3
             </p>
           </div>
         </div>

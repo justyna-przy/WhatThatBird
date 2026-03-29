@@ -229,11 +229,11 @@ export default function Home() {
       <div className="flex flex-col items-center gap-2 text-center">
         <div className="flex items-center gap-2">
           <Bird className="w-8 h-8 text-green-500" />
-          <h1 className="text-3xl font-bold tracking-tight">WhatThatBird</h1>
+          <h1 className="text-3xl font-bold tracking-tight">MicroBird</h1>
         </div>
         <p className="text-muted-foreground text-sm max-w-md">
-          On-device Irish bird call classifier running on a MAX78002 neural-network
-          accelerator. Record 3 seconds of audio and let the chip identify the species.
+          Microjoule-range embedded bird-call classifier on MAX78002. Record 3 seconds of audio and let the on-device
+          model return top species predictions.
         </p>
       </div>
 

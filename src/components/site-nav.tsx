@@ -18,21 +18,21 @@ export function SiteNav({ light = false, className }: SiteNavProps) {
       <Link
         href="/"
         className={cn(
-          "font-medium tracking-wide transition-opacity hover:opacity-80",
-          light ? "text-slate-100" : "text-slate-900"
+          "font-nav-lora text-base font-medium tracking-normal transition-colors duration-200 md:text-lg",
+          light ? "text-white hover:text-[#0a1b39]" : "text-white hover:text-[#0a1b39]"
         )}
       >
         {OWNER_HANDLE}
       </Link>
 
-      <nav className="flex flex-wrap items-center justify-end gap-x-5 gap-y-1 text-sm md:gap-x-8 md:text-base">
+      <nav className="flex flex-wrap items-center justify-end gap-x-5 gap-y-1 text-base md:gap-x-8 md:text-lg">
         {NAV_LINKS.map((link) => (
           <Link
             key={link.href}
             href={link.href}
             className={cn(
-              "transition-opacity hover:opacity-80",
-              light ? "text-slate-100" : "text-slate-900"
+              "font-nav-lora font-medium transition-colors duration-200",
+              light ? "text-white hover:text-[#0a1b39]" : "text-white hover:text-[#0a1b39]"
             )}
           >
             {link.label}
@@ -43,8 +43,8 @@ export function SiteNav({ light = false, className }: SiteNavProps) {
           target="_blank"
           rel="noreferrer"
           className={cn(
-            "transition-opacity hover:opacity-80",
-            light ? "text-slate-100" : "text-slate-900"
+            "font-nav-lora font-medium transition-colors duration-200",
+            light ? "text-white hover:text-[#0a1b39]" : "text-white hover:text-[#0a1b39]"
           )}
         >
           GitHub
