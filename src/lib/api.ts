@@ -144,6 +144,7 @@ export async function inferAudioBlob(
 
   const resp = await fetch(`${API_BASE}/api/infer?top=${topK}&metrics=1`, {
     method: "POST",
+    headers: { "ngrok-skip-browser-warning": "true" },
     body: form,
   });
 
@@ -181,6 +182,7 @@ export async function inferRawPcm(
  */
 export async function queryStatus(): Promise<Record<string, unknown>> {
   const resp = await fetch(`${API_BASE}/api/status`, {
+    headers: { "ngrok-skip-browser-warning": "true" },
     signal: AbortSignal.timeout(6_000),
   });
   if (!resp.ok) throw new Error(`Status check failed: ${resp.status}`);

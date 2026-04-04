@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Bird, Clock, Layers, Mic, MicOff } from "lucide-react";
+import { AlertCircle, Clock, Mic, MicOff } from "lucide-react";
 import { SiteNav } from "@/components/site-nav";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -62,15 +62,12 @@ interface InferResponse {
   ok?: boolean;
   windows?: InferWindow[];
   error?: string;
-  queueDepth?: number;
 }
 
 interface HealthStatus {
   online: boolean;
   lastSeenMs: number | null;
   lastError: string | null;
-  queueDepth: number;
-  busy: boolean;
 }
 
 interface SpectrogramData {
@@ -266,7 +263,8 @@ function buildStubWindows(clip: PreparedClip): InferWindow[] {
 }
 
 async function decodeTrimAndResample(
-  audioBlob: Blob
+  audioBlob: Blob,
+  options?: { rejectIfLong?: boolean }
 ): Promise<{ samples: Float32Array; originalDurationSec: number; wasTrimmed: boolean }> {
   const arrayBuffer = await audioBlob.arrayBuffer();
   const context = new AudioContext();
@@ -274,6 +272,12 @@ async function decodeTrimAndResample(
   try {
     const decoded = await context.decodeAudioData(arrayBuffer.slice(0));
     const originalDurationSec = decoded.duration;
+    const isLongerThanLimit = originalDurationSec > MAX_AUDIO_SECONDS + 0.001;
+    if (options?.rejectIfLong && isLongerThanLimit) {
+      throw new Error(
+        `Clip is ${originalDurationSec.toFixed(1)}s. Please upload audio that is ${MAX_AUDIO_SECONDS}s or shorter.`
+      );
+    }
     const targetDurationSec = Math.min(originalDurationSec, MAX_AUDIO_SECONDS);
     const targetLength = Math.max(1, Math.floor(targetDurationSec * SAMPLE_RATE));
 
@@ -291,7 +295,7 @@ async function decodeTrimAndResample(
     return {
       samples,
       originalDurationSec,
-      wasTrimmed: originalDurationSec > MAX_AUDIO_SECONDS + 0.001,
+      wasTrimmed: isLongerThanLimit,
     };
   } finally {
     await context.close();
@@ -398,18 +402,6 @@ function drawSpectrogramCanvas(canvas: HTMLCanvasElement, spectrogram: Spectrogr
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(offscreen, 0, 0, canvas.width, canvas.height);
-
-  if (spectrogram.durationSec > 0) {
-    ctx.strokeStyle = "rgba(255,255,255,0.25)";
-    ctx.lineWidth = 1;
-    for (let marker = 0; marker <= spectrogram.durationSec + 0.001; marker += WINDOW_SECONDS) {
-      const x = (marker / spectrogram.durationSec) * canvas.width;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, canvas.height);
-      ctx.stroke();
-    }
-  }
 }
 
 export default function TrialPage() {
@@ -418,7 +410,6 @@ export default function TrialPage() {
   const [clip, setClip] = useState<PreparedClip | null>(null);
   const [windows, setWindows] = useState<InferWindow[]>([]);
   const [isStubResult, setIsStubResult] = useState(false);
-  const [activeWindow, setActiveWindow] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [noticeMsg, setNoticeMsg] = useState<string | null>(null);
   const [recordingMs, setRecordingMs] = useState(0);
@@ -434,20 +425,15 @@ export default function TrialPage() {
   const inferTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isOnline = health?.online ?? false;
-  const queueDepth = health?.queueDepth ?? 0;
-  const expectedWindows = clip ? Math.max(1, Math.ceil(clip.durationSec / WINDOW_SECONDS)) : 0;
-  const selectedWindow = windows[activeWindow] ?? null;
+  const selectedWindow = windows[0] ?? null;
 
-  const timelineSummary = useMemo(() => {
-    if (windows.length === 0) return "No predictions yet.";
-    return windows
-      .map((window) => {
-        const top = window.predictions[0];
-        const label = top ? formatLabel(top) : "No prediction";
-        return `${window.start_s.toFixed(0)}–${window.end_s.toFixed(0)}s: ${label}`;
-      })
+  const predictionSummary = useMemo(() => {
+    if (!selectedWindow) return "Top predictions will appear here after classification.";
+    return selectedWindow.predictions
+      .slice(0, 3)
+      .map((prediction) => `${formatLabel(prediction)} (${prediction.conf.toFixed(1)}%)`)
       .join("  •  ");
-  }, [windows]);
+  }, [selectedWindow]);
 
   const clearTimers = useCallback(() => {
     if (recordTimerRef.current) {
@@ -501,16 +487,15 @@ export default function TrialPage() {
     drawSpectrogramCanvas(canvasRef.current, clip.spectrogram);
   }, [clip]);
 
-  const prepareClip = useCallback(async (blob: Blob, name: string) => {
+  const prepareClip = useCallback(async (blob: Blob, name: string, rejectIfLong = false) => {
     setUiState("preparing");
     setErrorMsg(null);
     setNoticeMsg(null);
     setWindows([]);
     setIsStubResult(false);
-    setActiveWindow(0);
 
     try {
-      const { samples, originalDurationSec, wasTrimmed } = await decodeTrimAndResample(blob);
+      const { samples, originalDurationSec, wasTrimmed } = await decodeTrimAndResample(blob, { rejectIfLong });
       const spectrogram = buildSpectrogram(samples);
       const wavBlob = encodeMono16BitWav(samples, SAMPLE_RATE);
 
@@ -540,7 +525,7 @@ export default function TrialPage() {
     async (event: ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
       if (!file) return;
-      await prepareClip(file, file.name);
+      await prepareClip(file, file.name, true);
       event.target.value = "";
     },
     [prepareClip]
@@ -621,7 +606,6 @@ export default function TrialPage() {
       const simulatedWindows = buildStubWindows(clip);
       setWindows(simulatedWindows);
       setIsStubResult(true);
-      setActiveWindow(0);
       setErrorMsg(null);
       setNoticeMsg(baseNotice ? `${baseNotice} ${reason}` : reason);
       setInferProgress(100);
@@ -658,13 +642,12 @@ export default function TrialPage() {
 
       const nextWindows = data.windows ?? [];
       if (nextWindows.length === 0) {
-        setSimulatedResult("The API returned no windows, so these predictions are simulated for preview.");
+        setSimulatedResult("The API returned no predictions, so these predictions are simulated for preview.");
         return;
       }
 
       setWindows(nextWindows);
       setIsStubResult(false);
-      setActiveWindow(0);
       setNoticeMsg(baseNotice);
       setInferProgress(100);
       setUiState("ready");
@@ -686,24 +669,31 @@ export default function TrialPage() {
 
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10 md:px-8">
         <header className="space-y-2">
-          <div className="inline-flex items-center gap-2 rounded-full bg-card px-3 py-1 ring-1 ring-[#afc4ea]">
-            <Bird className="h-4 w-4 text-[#0f2c70]" />
-            <span className="text-xs font-medium tracking-wide text-[#0f2c70] uppercase">Live Trial</span>
+          <p className="text-xs font-medium tracking-[0.18em] text-slate-500 uppercase">Demo</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-4xl text-[#0b235c] md:text-5xl">Run Inference On Your Audio</h1>
+            <Badge
+              variant="secondary"
+              className={cn(
+                "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm",
+                isOnline
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-rose-200 bg-rose-50 text-rose-800"
+              )}
+            >
+              <span
+                className={cn("inline-block h-2.5 w-2.5 rounded-full", isOnline ? "bg-emerald-500" : "bg-rose-500")}
+              />
+              {isOnline ? "Device online" : "Device offline"}
+            </Badge>
           </div>
-          <h1 className="text-4xl text-[#0b235c] md:text-5xl">Run Inference On Your Audio</h1>
-          <p className="max-w-3xl text-base text-slate-700 md:text-lg">
-            Upload or record up to {MAX_AUDIO_SECONDS} seconds. We compute a frontend spectrogram for visualization
-            and map each 3-second prediction window directly onto it.
-          </p>
         </header>
 
-        <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
+        <div className="grid gap-6">
           <Card className="rounded-2xl ring-1 ring-[#afc4ea]">
             <CardHeader>
               <CardTitle className="text-[#0b235c]">Audio Input</CardTitle>
-              <CardDescription>
-                Max length: {MAX_AUDIO_SECONDS}s ({Math.ceil(MAX_AUDIO_SECONDS / WINDOW_SECONDS)} windows).
-              </CardDescription>
+               <CardDescription>Upload or record up to 3 seconds of audio.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <input
@@ -767,7 +757,7 @@ export default function TrialPage() {
               {uiState === "inferencing" && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-sm text-slate-700">
-                    <span>Running inference...</span>
+                    <span>Classifying clip...</span>
                     <span>{Math.round(inferProgress)}%</span>
                   </div>
                   <Progress value={inferProgress} className="h-2" />
@@ -785,46 +775,11 @@ export default function TrialPage() {
                     <p className="font-medium">{clip.durationSec.toFixed(2)} s</p>
                   </div>
                   <div>
-                    <p className="text-xs tracking-wide text-slate-500 uppercase">Expected windows</p>
-                    <p className="font-medium">{expectedWindows}</p>
+                    <p className="text-xs tracking-wide text-slate-500 uppercase">Inference Mode</p>
+                    <p className="font-medium">Single clip</p>
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-2xl ring-1 ring-[#afc4ea]">
-            <CardHeader>
-              <CardTitle className="text-[#0b235c]">Device Status</CardTitle>
-              <CardDescription>Connection and queue state for MAX78002 runtime.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center gap-2 text-sm">
-                <span
-                  className={cn(
-                    "inline-block h-2.5 w-2.5 rounded-full",
-                    isOnline ? "bg-emerald-500" : "bg-rose-500"
-                  )}
-                />
-                <span className="font-medium text-slate-800">{isOnline ? "Device online" : "Device offline"}</span>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
-                <Badge variant="secondary" className="bg-white ring-1 ring-[#c7d8f7]">
-                  <Layers className="mr-1 h-3.5 w-3.5" />
-                  Queue: {queueDepth}
-                </Badge>
-                {health?.busy && <Badge variant="secondary" className="bg-white ring-1 ring-[#c7d8f7]">Busy</Badge>}
-              </div>
-
-              <div className="rounded-xl border border-[#afc4ea] bg-[#f4f8ff] p-3 text-sm text-slate-700">
-                <p className="font-medium text-[#0b235c]">How this API works</p>
-                <p className="mt-2">
-                  We send the clip to <code className="rounded bg-white px-1">/api/infer</code>. The backend forwards
-                  it to BirdSpec, which splits audio into 3-second windows and returns top predictions per window with
-                  latency/energy metrics.
-                </p>
-              </div>
             </CardContent>
           </Card>
         </div>
@@ -844,51 +799,12 @@ export default function TrialPage() {
 
         <Card className="rounded-2xl ring-1 ring-[#afc4ea]">
           <CardHeader>
-            <CardTitle className="text-[#0b235c]">Spectrogram + Window Mapping</CardTitle>
-            <CardDescription>
-              Frontend-only spectrogram visualization. Click a highlighted window band to inspect that prediction.
-            </CardDescription>
+            <CardTitle className="text-[#0b235c]">Spectrogram Preview</CardTitle>
+            <CardDescription>Visualization of the uploaded clip.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent>
             <div className="relative overflow-hidden rounded-xl border-2 border-[#8fabdf] bg-[#091a3a]">
               <canvas ref={canvasRef} width={960} height={260} className="h-64 w-full" />
-
-              {clip &&
-                windows.map((window, index) => {
-                  const left = (window.start_s / clip.durationSec) * 100;
-                  const width = ((window.end_s - window.start_s) / clip.durationSec) * 100;
-                  return (
-                    <button
-                      key={`${window.window_index}-${window.start_s}`}
-                      type="button"
-                      onClick={() => setActiveWindow(index)}
-                      className={cn(
-                        "absolute top-0 bottom-0 cursor-pointer border-x transition-colors",
-                        activeWindow === index
-                          ? "border-[#f4b183] bg-[#f4b183]/25"
-                          : "border-white/25 bg-[#0a1b39]/5 hover:bg-[#2f63d9]/15"
-                      )}
-                      style={{ left: `${left}%`, width: `${width}%` }}
-                      aria-label={`Select window ${index + 1}`}
-                    />
-                  );
-                })}
-            </div>
-
-            <div className="flex flex-wrap gap-2 text-xs text-slate-700">
-              {windows.map((window, index) => (
-                <Badge
-                  key={`${window.window_index}-badge`}
-                  variant="secondary"
-                  className={cn(
-                    "cursor-pointer bg-white ring-1 ring-[#c7d8f7]",
-                    activeWindow === index && "bg-[#f4b183]/30 ring-[#f4b183]"
-                  )}
-                  onClick={() => setActiveWindow(index)}
-                >
-                  W{index + 1}: {window.start_s.toFixed(0)}-{window.end_s.toFixed(0)}s
-                </Badge>
-              ))}
             </div>
           </CardContent>
         </Card>
@@ -896,94 +812,63 @@ export default function TrialPage() {
         <Card className="rounded-2xl ring-1 ring-[#afc4ea]">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-[#0b235c]">
-              Per-Window Predictions
+              Predictions
               {isStubResult && (
                 <Badge variant="secondary" className="bg-[#fff4ea] text-[#7b4f2c] ring-1 ring-[#f0caa8]">
                   Simulated
                 </Badge>
               )}
             </CardTitle>
-            <CardDescription>{timelineSummary}</CardDescription>
+            <CardDescription>{predictionSummary}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {windows.length === 0 ? (
               <p className="text-sm text-slate-600">
-                Run inference to populate predictions for each 3-second window.
+                Run inference to populate predictions.
               </p>
             ) : (
-              <>
-                {selectedWindow && (
-                  <div className="rounded-xl border border-[#afc4ea] bg-[#f4f8ff] p-4">
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                      <p className="font-medium text-[#0b235c]">
-                        Window {activeWindow + 1} ({selectedWindow.start_s.toFixed(1)}s-{selectedWindow.end_s.toFixed(1)}s)
-                      </p>
-                      <div className="flex items-center gap-2 text-xs text-slate-600">
-                        {selectedWindow.latency_us != null && (
-                          <span className="inline-flex items-center gap-1">
-                            <Clock className="h-3.5 w-3.5" />
-                            {(selectedWindow.latency_us / 1000).toFixed(1)} ms CNN
-                          </span>
-                        )}
-                        {selectedWindow.total_nj != null && (
-                          <span>{(selectedWindow.total_nj / 1_000_000).toFixed(3)} mJ total</span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      {selectedWindow.predictions.map((prediction, rank) => {
-                        const confidence = Math.max(0, Math.min(100, prediction.conf));
-                        return (
-                          <div key={`${selectedWindow.window_index}-${prediction.idx}`}>
-                            <div className="mb-1 flex items-center justify-between text-sm">
-                              <p className="font-medium text-slate-800">
-                                {rank + 1}. {formatLabel(prediction)}
-                              </p>
-                              <p className="text-slate-600">{confidence.toFixed(1)}%</p>
-                            </div>
-                            <div className="h-2 rounded-full bg-white ring-1 ring-[#d4e1f9]">
-                              <div
-                                className="h-full rounded-full bg-[#2f63d9]"
-                                style={{ width: `${confidence}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
+              selectedWindow && (
+                <div className="rounded-xl border border-[#afc4ea] bg-[#f4f8ff] p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium text-[#0b235c]">
+                      Analyzed clip ({selectedWindow.end_s.toFixed(1)}s)
+                    </p>
+                    <div className="flex items-center gap-2 text-xs text-slate-600">
+                      {selectedWindow.latency_us != null && (
+                        <span className="inline-flex items-center gap-1">
+                          <Clock className="h-3.5 w-3.5" />
+                          {(selectedWindow.latency_us / 1000).toFixed(1)} ms CNN
+                        </span>
+                      )}
+                      {selectedWindow.total_nj != null && (
+                        <span>{(selectedWindow.total_nj / 1_000_000).toFixed(3)} mJ total</span>
+                      )}
                     </div>
                   </div>
-                )}
 
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  {windows.map((window, index) => {
-                    const top = window.predictions[0];
-                    return (
-                      <button
-                        key={`${window.window_index}-card`}
-                        type="button"
-                        onClick={() => setActiveWindow(index)}
-                        className={cn(
-                          "rounded-xl border bg-white/85 p-3 text-left transition-colors",
-                          activeWindow === index
-                            ? "border-[#f4b183] ring-2 ring-[#f4b183]/40"
-                            : "border-[#c7d8f7] hover:bg-[#edf3ff]"
-                        )}
-                      >
-                        <p className="text-xs tracking-wide text-slate-500 uppercase">
-                          Window {index + 1} ({window.start_s.toFixed(0)}-{window.end_s.toFixed(0)}s)
-                        </p>
-                        <p className="mt-1 text-sm font-medium text-[#0b235c]">
-                          {top ? formatLabel(top) : "No prediction"}
-                        </p>
-                        <p className="text-xs text-slate-600">
-                          {top ? `${top.conf.toFixed(1)}% confidence` : "No confidence data"}
-                        </p>
-                      </button>
-                    );
-                  })}
+                  <div className="space-y-3">
+                    {selectedWindow.predictions.map((prediction, rank) => {
+                      const confidence = Math.max(0, Math.min(100, prediction.conf));
+                      return (
+                        <div key={`${prediction.idx}-${rank}`}>
+                          <div className="mb-1 flex items-center justify-between text-sm">
+                            <p className="font-medium text-slate-800">
+                              {rank + 1}. {formatLabel(prediction)}
+                            </p>
+                            <p className="text-slate-600">{confidence.toFixed(1)}%</p>
+                          </div>
+                          <div className="h-2 rounded-full bg-white ring-1 ring-[#d4e1f9]">
+                            <div
+                              className="h-full rounded-full bg-[#2f63d9]"
+                              style={{ width: `${confidence}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </>
+              )
             )}
           </CardContent>
         </Card>
