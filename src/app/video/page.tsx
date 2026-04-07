@@ -5,7 +5,7 @@ import { SiteNav } from "@/components/site-nav";
 
 async function hasDemoVideo() {
   try {
-    await access(path.join(process.cwd(), "public", "demo.mp4"));
+    await access(path.join(process.cwd(), "public", "MicroBird.mp4"));
     return true;
   } catch {
     return false;
@@ -30,17 +30,13 @@ export default async function DemoPage() {
         <div className="mt-10 overflow-hidden rounded-3xl border border-slate-200 bg-slate-950 shadow-lg">
           {videoReady ? (
             <video className="aspect-video w-full" controls preload="metadata" poster="/birdies.png">
-              <source src="/demo.mp4" type="video/mp4" />
+              <source src="/MicroBird.mp4" type="video/mp4" />
               Your browser does not support video playback.
             </video>
           ) : (
             <div className="flex aspect-video items-center justify-center px-8 text-center text-slate-200">
               <div>
                 <p className="text-xl font-medium">Demo video not added yet</p>
-                <p className="mt-3 text-sm text-slate-400">
-                  Add <code className="rounded bg-slate-800 px-1.5 py-0.5">public/demo.mp4</code> and this page will
-                  play it automatically.
-                </p>
               </div>
             </div>
           )}
