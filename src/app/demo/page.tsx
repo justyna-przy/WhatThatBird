@@ -429,10 +429,10 @@ export default function TrialPage() {
 
   const predictionSummary = useMemo(() => {
     if (!selectedWindow) return "Top predictions will appear here after classification.";
-    return selectedWindow.predictions
-      .slice(0, 3)
-      .map((prediction) => `${formatLabel(prediction)} (${prediction.conf.toFixed(1)}%)`)
-      .join("  •  ");
+    const topBird = selectedWindow.predictions.find((prediction) => prediction.label !== "non_bird");
+    const topPrediction = topBird ?? selectedWindow.predictions[0];
+    if (!topPrediction) return "Top predictions will appear here after classification.";
+    return `${formatLabel(topPrediction)} (${topPrediction.conf.toFixed(1)}%)`;
   }, [selectedWindow]);
 
   const clearTimers = useCallback(() => {
@@ -675,14 +675,14 @@ export default function TrialPage() {
             <Badge
               variant="secondary"
               className={cn(
-                "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm",
+                "inline-flex h-12 items-center gap-2 rounded-full border px-5 text-lg font-medium md:h-[3.5rem]",
                 isOnline
                   ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                   : "border-rose-200 bg-rose-50 text-rose-800"
               )}
             >
               <span
-                className={cn("inline-block h-2.5 w-2.5 rounded-full", isOnline ? "bg-emerald-500" : "bg-rose-500")}
+                className={cn("inline-block h-3 w-3 rounded-full", isOnline ? "bg-emerald-500" : "bg-rose-500")}
               />
               {isOnline ? "Device online" : "Device offline"}
             </Badge>
@@ -692,7 +692,7 @@ export default function TrialPage() {
         <div className="grid gap-6">
           <Card className="rounded-2xl ring-1 ring-[#afc4ea]">
             <CardHeader>
-              <CardTitle className="text-[#0b235c]">Audio Input</CardTitle>
+              <CardTitle className="font-nav-lora text-[#0b235c]">Audio Input</CardTitle>
                <CardDescription>Upload or record up to 3 seconds of audio.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -799,7 +799,7 @@ export default function TrialPage() {
 
         <Card className="rounded-2xl ring-1 ring-[#afc4ea]">
           <CardHeader>
-            <CardTitle className="text-[#0b235c]">Spectrogram Preview</CardTitle>
+            <CardTitle className="font-nav-lora text-[#0b235c]">Spectrogram Preview</CardTitle>
             <CardDescription>Visualization of the uploaded clip.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -811,7 +811,7 @@ export default function TrialPage() {
 
         <Card className="rounded-2xl ring-1 ring-[#afc4ea]">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-[#0b235c]">
+            <CardTitle className="font-nav-lora flex items-center gap-2 text-[#0b235c]">
               Predictions
               {isStubResult && (
                 <Badge variant="secondary" className="bg-[#fff4ea] text-[#7b4f2c] ring-1 ring-[#f0caa8]">

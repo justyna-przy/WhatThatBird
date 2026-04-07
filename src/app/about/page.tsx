@@ -1,21 +1,26 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
 import Image from "next/image";
+import { ArrowUpRight } from "lucide-react";
 import { SiteNav } from "@/components/site-nav";
 
 const pipeline = ["Microphone", "I2S", "DMA", "Spectrogram", "CNN Accelerator", "UART", "Web App"];
+const PROFILE_CANDIDATES = ["me_and_gandalf.jpg", "profile.jpg", "profile.jpeg", "profile.png"];
 
-async function hasProfilePhoto() {
-  try {
-    await access(path.join(process.cwd(), "public", "profile.jpg"));
-    return true;
-  } catch {
-    return false;
+async function resolveProfilePhotoSrc() {
+  for (const fileName of PROFILE_CANDIDATES) {
+    try {
+      await access(path.join(process.cwd(), "public", fileName));
+      return `/${fileName}`;
+    } catch {
+      // Try next candidate.
+    }
   }
+  return null;
 }
 
 export default async function AboutPage() {
-  const photoReady = await hasProfilePhoto();
+  const photoSrc = await resolveProfilePhotoSrc();
 
   return (
     <main className="min-h-screen bg-background text-slate-900">
@@ -23,81 +28,53 @@ export default async function AboutPage() {
 
       <section className="mx-auto w-full max-w-6xl px-6 py-12 md:px-8">
         <p className="text-xs font-medium tracking-[0.18em] text-slate-500 uppercase">About</p>
-        <h1 className="mt-3 text-4xl text-[#0b235c] md:text-6xl">Method and Architecture</h1>
+        <h1 className="mt-3 text-4xl text-[#0b235c] md:text-6xl">Project Story</h1>
+        <div className="mt-10 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+          <article className="relative overflow-hidden rounded-3xl border border-[#bcd0f3] bg-gradient-to-br from-[#f7fbff] via-white to-[#eef4ff] p-8">
+            <h2 className="font-nav-lora relative mt-3 text-3xl leading-tight text-[#0b235c] md:text-4xl">
+              My FYP was about proving that edge AI can be practical, not just theoretical.
+            </h2>
+            <p className="relative mt-5 max-w-3xl text-base leading-relaxed text-slate-700 md:text-lg">
+              I wanted a project that combined embedded systems, machine learning, and product thinking in one full
+              build. Bird-call classification gave me exactly that challenge, because it requires strong model
+              performance but also careful hardware, energy, and deployment decisions.
+            </p>
+            <p className="relative mt-4 max-w-3xl text-base leading-relaxed text-slate-700 md:text-lg">
+              Instead of stopping at model training, I focused on the end-to-end pipeline: capture a short clip, run
+              inference on MAX78002, and return understandable predictions through a web interface.
+            </p>
+          </article>
 
-        <div className="mt-10 grid gap-8 lg:grid-cols-[0.9fr_1.1fr]">
-          <div className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-slate-200">
-            <h2 className="text-3xl text-[#0b235c]">Bio</h2>
-            <div className="mt-4 flex items-center gap-4">
-              {photoReady ? (
+          <aside className="font-nav-lora rounded-3xl border border-slate-200 bg-card p-6 shadow-sm">
+            <div className="relative aspect-square w-full overflow-hidden rounded-2xl ring-1 ring-slate-200">
+              {photoSrc ? (
                 <Image
-                  src="/profile.jpg"
-                  alt="Project author profile photo"
-                  width={112}
-                  height={112}
-                  className="h-28 w-28 rounded-2xl object-cover ring-1 ring-slate-200"
+                  src={photoSrc}
+                  alt="Justyna Przyborska"
+                  fill
+                  className="object-cover"
+                  sizes="(max-width: 1024px) 100vw, 30vw"
                 />
               ) : (
-                <div className="flex h-28 w-28 items-center justify-center rounded-2xl bg-slate-100 text-2xl font-semibold text-slate-500 ring-1 ring-slate-200">
+                <div className="flex h-full w-full items-center justify-center bg-slate-100 text-4xl font-semibold text-slate-500">
                   JP
                 </div>
               )}
-              <div>
-                <p className="text-lg font-semibold text-slate-900">Justyna Przy</p>
-                <p className="text-sm text-slate-600">Final Year Project, University of Limerick</p>
-                {!photoReady && (
-                  <p className="mt-1 text-xs text-slate-500">
-                    Add <code className="rounded bg-slate-100 px-1 py-0.5">public/profile.jpg</code> to show your photo
-                  </p>
-                )}
-              </div>
             </div>
-            <p className="mt-5 text-slate-700">
-              I built MicroBird as an end-to-end pipeline combining embedded audio capture, on-device spectrogram
-              processing, and a quantized CNN on MAX78002. The goal was to deliver practical bird-call classification
-              with low energy and no cloud dependency.
-            </p>
-          </div>
 
-          <div className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-slate-200">
-            <h2 className="text-3xl text-[#0b235c]">System flow</h2>
-            <div className="mt-5 flex flex-wrap items-center gap-2">
-              {pipeline.map((step, index) => (
-                <div key={step} className="flex items-center gap-2">
-                  <span className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700">
-                    {step}
-                  </span>
-                  {index < pipeline.length - 1 && <span className="text-slate-400">→</span>}
-                </div>
-              ))}
-            </div>
-            <p className="mt-5 text-slate-700">
-              Audio is captured from the microphone, streamed through I2S and DMA, converted into model-ready
-              features, inferred on the MAX78002 accelerator, and sent over UART to the web interface for display.
-            </p>
-          </div>
-        </div>
+            <p className="mt-4 text-xl font-semibold text-[#0a1b39]">Justyna Przyborska</p>
+            <p className="mt-1 text-sm text-slate-600">Immersive Software Engineering student, University of Limerick</p>
 
-        <div className="mt-8 grid gap-6 md:grid-cols-2">
-          <div className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-slate-200">
-            <h3 className="text-3xl text-[#0b235c]">Model</h3>
-            <ul className="mt-4 space-y-2 text-slate-700">
-              <li>ResNet-style architecture</li>
-              <li>Quantization-aware training (QAT)</li>
-              <li>51 classes (50 species + non-bird)</li>
-              <li>Trained on XC-ML bird dataset</li>
-            </ul>
-          </div>
-          <div className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-slate-200">
-            <h3 className="text-3xl text-[#0b235c]">Accuracy</h3>
-            <p className="mt-4 text-slate-700">
-              Best validated model (DW2) reached 83.01% top-1 QAT validation accuracy. Hardware-confirmed W3 reached
-              80.59% top-1 and 91.53% top-3 on the held-out test set.
-            </p>
-            <p className="mt-4 inline-flex rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700">
-              Test accuracy (W3): 80.59% top-1 / 91.53% top-3
-            </p>
-          </div>
+            <a
+              href="https://justyna.ie"
+              target="_blank"
+              rel="noreferrer"
+              className="mt-6 inline-flex items-center gap-1.5 text-sm font-semibold text-[#0b235c] underline decoration-slate-300 underline-offset-4 transition-colors hover:text-[#143a93]"
+            >
+              justyna.ie
+              <ArrowUpRight className="h-4 w-4" />
+            </a>
+          </aside>
         </div>
       </section>
     </main>

@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
-import { Button } from "@/components/ui/button";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -52,39 +51,38 @@ export function ReportPdfViewer({
   return (
     <div className="flex h-[calc(100svh-7rem)] flex-col bg-white">
       <div className="flex items-center justify-between border-b border-[#c4d5f2] bg-[#eaf2ff] px-4 py-2">
-        <p className="text-sm font-semibold text-[#0b235c]">{title}</p>
+        <p className="font-nav-lora text-sm font-semibold text-[#0b235c]">{title}</p>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-[#b8caee] bg-white text-slate-700 hover:bg-slate-50"
+          <button
+            type="button"
+            className="font-nav-lora px-1 text-lg font-semibold text-[#0a1b39] transition-colors hover:text-[#2f63d9]"
             onClick={() => setZoom((prev) => Math.max(0.7, prev - 0.08))}
+            aria-label="Zoom out"
           >
             -
-          </Button>
-          <span className="min-w-14 text-center text-xs font-medium text-slate-700 tabular-nums">
+          </button>
+          <span className="font-nav-lora min-w-14 text-center text-sm font-medium text-[#0a1b39] tabular-nums">
             {Math.round(zoom * 100)}%
           </span>
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-[#b8caee] bg-white text-slate-700 hover:bg-slate-50"
+          <button
+            type="button"
+            className="font-nav-lora px-1 text-lg font-semibold text-[#0a1b39] transition-colors hover:text-[#2f63d9]"
             onClick={() => setZoom((prev) => Math.min(1.5, prev + 0.08))}
+            aria-label="Zoom in"
           >
             +
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-[#b8caee] bg-white text-slate-700 hover:bg-slate-50"
+          </button>
+          <button
+            type="button"
+            className="font-nav-lora rounded-md border border-[#b8caee] bg-white px-3 py-1.5 text-sm font-medium text-[#0a1b39] transition-colors hover:bg-slate-50"
             onClick={() => setZoom(1)}
           >
             Reset
-          </Button>
+          </button>
           <a
             href={downloadUrl}
             download
-            className="rounded-md bg-[#0f2c70] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#143a93]"
+            className="font-nav-lora rounded-md bg-[#0f2c70] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#143a93]"
           >
             Download
           </a>

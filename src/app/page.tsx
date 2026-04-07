@@ -134,41 +134,6 @@ export default function Home() {
               </div>
             </div>
           </div>
-
-          <div className="rounded-3xl bg-card p-6 shadow-sm ring-1 ring-slate-200">
-            <h3 className="text-3xl text-[#0b235c]">Explore the site</h3>
-            <div className="mt-5 space-y-3">
-              <Link href="/trial" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
-                <span className="font-medium">Live trial</span>
-                <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
-              </Link>
-              <Link href="/video" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
-                <span className="font-medium">Demo video</span>
-                <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
-              </Link>
-              <Link href="/#about" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
-                <span className="font-medium">Project story</span>
-                <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
-              </Link>
-              <Link href="/about" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
-                <span className="font-medium">Method and architecture</span>
-                <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
-              </Link>
-              <Link href="/report" className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100">
-                <span className="font-medium">Paper and abstract</span>
-                <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
-              </Link>
-              <a
-                href={GITHUB_LINKS.webApp}
-                target="_blank"
-                rel="noreferrer"
-                className="group flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 hover:bg-slate-100"
-              >
-                <span className="font-medium">GitHub repository</span>
-                <ArrowUpRight className="h-4 w-4 text-slate-500 group-hover:text-slate-800" />
-              </a>
-            </div>
-          </div>
         </div>
       </section>
     </main>
